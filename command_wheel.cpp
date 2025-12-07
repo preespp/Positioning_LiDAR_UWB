@@ -1,46 +1,97 @@
 #include "rclcpp/rclcpp.hpp"
-#include "rclcpp_action/rclcpp_action.hpp"
-#include "your_package_name/action/run_robot.hpp"
+#include "your_package_name/msg/wheel_command.hpp"
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
 
-class CommandControlNode : public rclcpp::Node {
+class KeyboardWheelTeleop : public rclcpp::Node {
 public:
-  using RunRobot = your_package_name::action::RunRobot;
-  using GoalHandleRunRobot = rclcpp_action::ClientGoalHandle<RunRobot>;
+  KeyboardWheelTeleop() : Node("keyboard_wheel_teleop") {
+    pub_ = create_publisher<your_package_name::msg::WheelCommand>("/wheel_cmd", 10);
 
-  CommandControlNode() : Node("command_control_node") {
-    client_ = rclcpp_action::create_client<RunRobot>(this, "/run_robot");
-    send_goal();
+    // Make terminal non-blocking
+    setup_terminal();
+
+    timer_ = create_wall_timer(
+        std::chrono::milliseconds(100),
+        std::bind(&KeyboardWheelTeleop::update, this));
+
+    RCLCPP_INFO(get_logger(),
+                "Keyboard teleop started.\n"
+                "Use:\n"
+                "  W/S = forward/back\n"
+                "  A/D = steering left/right\n"
+                "  Q   = quit");
+  }
+
+  ~KeyboardWheelTeleop() {
+    restore_terminal();
   }
 
 private:
-  void send_goal() {
-    if (!client_->wait_for_action_server()) {
-      RCLCPP_ERROR(this->get_logger(), "Action server not available.");
-      return;
-    }
+  void setup_terminal() {
+    tcgetattr(STDIN_FILENO, &orig_term_);
+    termios new_term = orig_term_;
+    new_term.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
 
-    auto goal_msg = RunRobot::Goal();
-    goal_msg.target_x = 2.0;
-    goal_msg.target_y = 1.5;
-
-    auto options = rclcpp_action::Client<RunRobot>::SendGoalOptions();
-    options.feedback_callback = [this](GoalHandleRunRobot::SharedPtr,
-                                       const std::shared_ptr<const RunRobot::Feedback> feedback) {
-      RCLCPP_INFO(this->get_logger(), "Progress: %.1f%%", feedback->progress);
-    };
-    options.result_callback = [this](const GoalHandleRunRobot::WrappedResult &result) {
-      RCLCPP_INFO(this->get_logger(), "Result: success=%d", result.result->success);
-    };
-
-    client_->async_send_goal(goal_msg, options);
+    // Make stdin non-blocking
+    fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
   }
 
-  rclcpp_action::Client<RunRobot>::SharedPtr client_;
+  void restore_terminal() {
+    tcsetattr(STDIN_FILENO, TCSANOW, &orig_term_);
+  }
+
+  void update() {
+    char c;
+    if (read(STDIN_FILENO, &c, 1) > 0) {
+      if (c == 'q') {
+        rclcpp::shutdown();
+        return;
+      } else if (c == 'w') {
+        throttle_ = std::min(1.0f, throttle_ + 0.1f);
+      } else if (c == 's') {
+        throttle_ = std::max(-1.0f, throttle_ - 0.1f);
+      } else if (c == 'a') {
+        steering_ = std::min(1.0f, steering_ + 0.1f);
+      } else if (c == 'd') {
+        steering_ = std::max(-1.0f, steering_ - 0.1f);
+      } else if (c == 'x') {  
+        throttle_ = 0;
+        steering_ = 0;
+      }
+
+      print_status();
+    }
+
+    publish_cmd();
+  }
+
+  void publish_cmd() {
+    your_package_name::msg::WheelCommand msg;
+    msg.throttle = throttle_;
+    msg.steering = steering_;
+    pub_->publish(msg);
+  }
+
+  void print_status() {
+    RCLCPP_INFO(get_logger(),
+                "Throttle: %.2f    Steering: %.2f",
+                throttle_, steering_);
+  }
+
+  rclcpp::Publisher<your_package_name::msg::WheelCommand>::SharedPtr pub_;
+  rclcpp::TimerBase::SharedPtr timer_;
+  termios orig_term_;
+
+  float throttle_ = 0.0f;
+  float steering_ = 0.0f;
 };
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<CommandControlNode>());
+  rclcpp::spin(std::make_shared<KeyboardWheelTeleop>());
   rclcpp::shutdown();
   return 0;
 }
