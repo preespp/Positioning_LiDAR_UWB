@@ -9,7 +9,6 @@ public:
   KeyboardWheelTeleop() : Node("keyboard_wheel_teleop") {
     pub_ = create_publisher<your_package_name::msg::WheelCommand>("/wheel_cmd", 10);
 
-    // Make terminal non-blocking
     setup_terminal();
 
     timer_ = create_wall_timer(
@@ -18,15 +17,13 @@ public:
 
     RCLCPP_INFO(get_logger(),
                 "Keyboard teleop started.\n"
-                "Use:\n"
-                "  W/S = forward/back\n"
-                "  A/D = steering left/right\n"
-                "  Q   = quit");
+                "W/S = throttle\n"
+                "A/D = steering\n"
+                "X   = stop\n"
+                "Q   = quit");
   }
 
-  ~KeyboardWheelTeleop() {
-    restore_terminal();
-  }
+  ~KeyboardWheelTeleop() { restore_terminal(); }
 
 private:
   void setup_terminal() {
@@ -35,7 +32,6 @@ private:
     new_term.c_lflag &= ~(ICANON | ECHO);
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
 
-    // Make stdin non-blocking
     fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
   }
 
@@ -49,20 +45,14 @@ private:
       if (c == 'q') {
         rclcpp::shutdown();
         return;
-      } else if (c == 'w') {
-        throttle_ = std::min(1.0f, throttle_ + 0.1f);
-      } else if (c == 's') {
-        throttle_ = std::max(-1.0f, throttle_ - 0.1f);
-      } else if (c == 'a') {
-        steering_ = std::min(1.0f, steering_ + 0.1f);
-      } else if (c == 'd') {
-        steering_ = std::max(-1.0f, steering_ - 0.1f);
-      } else if (c == 'x') {  
-        throttle_ = 0;
-        steering_ = 0;
-      }
+      } else if (c == 'w') throttle_ = std::min(1.0f, throttle_ + 0.1f);
+      else if (c == 's') throttle_ = std::max(-1.0f, throttle_ - 0.1f);
+      else if (c == 'a') steering_ = std::min(1.0f, steering_ + 0.1f);
+      else if (c == 'd') steering_ = std::max(-1.0f, steering_ - 0.1f);
+      else if (c == 'x') { throttle_ = 0; steering_ = 0; }
 
-      print_status();
+      RCLCPP_INFO(get_logger(), "Throttle: %.2f    Steering: %.2f",
+                  throttle_, steering_);
     }
 
     publish_cmd();
@@ -73,12 +63,6 @@ private:
     msg.throttle = throttle_;
     msg.steering = steering_;
     pub_->publish(msg);
-  }
-
-  void print_status() {
-    RCLCPP_INFO(get_logger(),
-                "Throttle: %.2f    Steering: %.2f",
-                throttle_, steering_);
   }
 
   rclcpp::Publisher<your_package_name::msg::WheelCommand>::SharedPtr pub_;
