@@ -8,13 +8,13 @@ class WheelMotorNode : public rclcpp::Node {
 public:
   WheelMotorNode() : Node("wheel_motor_node") {
     // open serial port
-    serial_fd_ = open("/dev/ttyUSB0", O_RDWR | O_NOCTTY | O_SYNC);
+    serial_fd_ = open("/dev/ttyUSB2", O_RDWR | O_NOCTTY | O_SYNC);
 
     if (serial_fd_ < 0) {
-      RCLCPP_ERROR(get_logger(), "Failed to open /dev/ttyUSB0");
+      RCLCPP_ERROR(get_logger(), "Failed to open /dev/ttyUSB2");
     } else {
       configure_serial();
-      RCLCPP_INFO(get_logger(), "Serial ready on /dev/ttyUSB0");
+      RCLCPP_INFO(get_logger(), "Serial ready on /dev/ttyUSB2");
     }
 
     cmd_sub_ = this->create_subscription<uwb_lidar::msg::WheelCommand>(

@@ -95,7 +95,7 @@ private:
 int main(int argc, char * argv[]) {
   rclcpp::init(argc, argv);
 
-  std::string port = "/dev/ttyUSB0";
+  std::string port = "/dev/ttyUSB1";
   unsigned int baud = 115200;
 
   auto node = std::make_shared<UwbPosNode>(port, baud);
