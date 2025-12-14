@@ -1,105 +1,135 @@
-#include "rclcpp/rclcpp.hpp"
-#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
-#include <boost/asio.hpp>
-#include <boost/bind/bind.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
+
+#include <termios.h>
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <string>
 #include <sstream>
+#include <iostream>
+#include <cmath>
 
-using namespace std::chrono_literals;
-
-class UwbPosNode : public rclcpp::Node {
+class UWBSerialNode : public rclcpp::Node {
 public:
-  UwbPosNode(const std::string & serial_port,
-             unsigned int baud_rate)
-    : Node("uwb_pos_node"),
-      io_(),
-      serial_(io_, serial_port)
-  {
-    serial_.set_option(boost::asio::serial_port_base::baud_rate(baud_rate));
-    uwb_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+  UWBSerialNode() : Node("uwb_serial_node") {
+
+    publisher_ = this->create_publisher<
+      geometry_msgs::msg::PoseWithCovarianceStamped>(
         "/uwb/position", 10);
-    start_read();
-    io_thread_ = std::thread([this]() { io_.run(); });
+
+    open_serial("/dev/ttyUSB0");  // <-- change if needed
+
+    timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(50),
+      std::bind(&UWBSerialNode::read_serial, this));
+
+    RCLCPP_INFO(get_logger(), "UWB Serial Node started");
   }
 
-  ~UwbPosNode() {
-    io_.stop();
-    if (io_thread_.joinable()) io_thread_.join();
+  ~UWBSerialNode() {
+    if (fd_ > 0) close(fd_);
   }
 
 private:
-  void start_read() {
-    boost::asio::async_read_until(serial_, buf_, '\n',
-        boost::bind(&UwbPosNode::on_line_read, this,
-                    boost::asio::placeholders::error,
-                    boost::asio::placeholders::bytes_transferred));
-  }
+  int fd_{-1};
+  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr publisher_;
+  rclcpp::TimerBase::SharedPtr timer_;
 
-  void on_line_read(const boost::system::error_code & ec,
-                    std::size_t bytes_transferred)
-  {
-  	(void)bytes_transferred;
-  	
-    if (!ec) {
-      std::istream is(&buf_);
-      std::string line;
-      std::getline(is, line);
-
-      RCLCPP_DEBUG(this->get_logger(), "Received line: '%s'", line.c_str());
-
-      double x=0.0, y=0.0, z=0.0;
-      if (parse_xyz_line(line, x, y, z)) {
-        auto msg = geometry_msgs::msg::PoseWithCovarianceStamped();
-        msg.header.stamp = this->get_clock()->now();
-        msg.header.frame_id = "uwb_tag";
-        msg.pose.pose.position.x = x;
-        msg.pose.pose.position.y = y;
-        msg.pose.pose.position.z = z;
-        // leave covariance at default (zero) or set if known
-        uwb_pub_->publish(msg);
-      } else {
-        RCLCPP_WARN(this->get_logger(), "Could not parse line: '%s'", line.c_str());
-      }
-
-      // Continue reading
-      start_read();
-    } else {
-      RCLCPP_ERROR(this->get_logger(), "Error reading serial: %s", ec.message().c_str());
+  void open_serial(const std::string &port) {
+    fd_ = open(port.c_str(), O_RDWR | O_NOCTTY | O_SYNC);
+    if (fd_ < 0) {
+      RCLCPP_FATAL(get_logger(), "Failed to open serial port");
+      rclcpp::shutdown();
     }
+
+    termios tty{};
+    tcgetattr(fd_, &tty);
+
+    cfsetospeed(&tty, B115200);
+    cfsetispeed(&tty, B115200);
+
+    tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;
+    tty.c_cflag |= (CLOCAL | CREAD);
+    tty.c_cflag &= ~(PARENB | PARODD | CSTOPB | CRTSCTS);
+
+    tty.c_iflag = 0;
+    tty.c_oflag = 0;
+    tty.c_lflag = 0;
+
+    tty.c_cc[VMIN]  = 0;
+    tty.c_cc[VTIME] = 1;
+
+    tcsetattr(fd_, TCSANOW, &tty);
   }
 
-  bool parse_xyz_line(const std::string & line, double & x, double & y, double & z) {
-    // Example: expect "x,y,z"
-    std::istringstream ss(line);
-    std::string sx, sy, sz;
-    if (! std::getline(ss, sx, ',')) return false;
-    if (! std::getline(ss, sy, ',')) return false;
-    if (! std::getline(ss, sz, ',')) return false;
+  void read_serial() {
+    char buf[256];
+    int n = read(fd_, buf, sizeof(buf) - 1);
+    if (n <= 0) return;
+
+    buf[n] = '\0';
+    std::string line(buf);
+
+    auto start = line.find('{');
+    auto end   = line.find('}');
+    if (start == std::string::npos || end == std::string::npos)
+      return;
+
+    line = line.substr(start + 1, end - start - 1);
+
+    double x, y, rmse;
+    if (!parse_json(line, x, y, rmse)) return;
+
+    publish_pose(x, y, rmse);
+  }
+
+  bool parse_json(const std::string &s, double &x, double &y, double &rmse) {
     try {
-      x = std::stod(sx);
-      y = std::stod(sy);
-      z = std::stod(sz);
-      return true;
+      std::stringstream ss(s);
+      std::string token;
+      while (std::getline(ss, token, ',')) {
+        auto sep = token.find(':');
+        if (sep == std::string::npos) continue;
+
+        std::string key = token.substr(0, sep);
+        std::string val = token.substr(sep + 1);
+
+        if (key.find("x") != std::string::npos) x = std::stod(val);
+        if (key.find("y") != std::string::npos) y = std::stod(val);
+        if (key.find("rmse") != std::string::npos) rmse = std::stod(val);
+      }
     } catch (...) {
       return false;
     }
+    return true;
   }
 
-  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr uwb_pub_;
-  boost::asio::io_context io_;
-  boost::asio::serial_port serial_;
-  boost::asio::streambuf buf_;
-  std::thread io_thread_;
+  void publish_pose(double x, double y, double rmse) {
+    geometry_msgs::msg::PoseWithCovarianceStamped msg;
+    msg.header.stamp = now();
+    msg.header.frame_id = "map";
+
+    msg.pose.pose.position.x = x;
+    msg.pose.pose.position.y = y;
+    msg.pose.pose.position.z = 0.0;
+
+    // Simple covariance using RMSE
+    double var = rmse * rmse;
+    msg.pose.covariance[0]  = var;  // x
+    msg.pose.covariance[7]  = var;  // y
+    msg.pose.covariance[35] = 1e-3; // yaw (unknown)
+
+    publisher_->publish(msg);
+
+    RCLCPP_INFO(get_logger(),
+      "UWB (x=%.2f, y=%.2f, rmse=%.2f)", x, y, rmse);
+  }
 };
 
-int main(int argc, char * argv[]) {
+int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
-
-  std::string port = "/dev/ttyUSB1";
-  unsigned int baud = 115200;
-
-  auto node = std::make_shared<UwbPosNode>(port, baud);
-  rclcpp::spin(node);
+  rclcpp::spin(std::make_shared<UWBSerialNode>());
   rclcpp::shutdown();
   return 0;
 }
