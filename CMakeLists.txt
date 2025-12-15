@@ -33,11 +33,13 @@ add_executable(central src/central.cpp)
 add_executable(uwb src/uwb.cpp)
 add_executable(command_wheel src/command_wheel.cpp)
 add_executable(wheel src/wheel.cpp)
+add_executable(slam src/slam_pose_publisher.cpp)
 
 ament_target_dependencies(central rclcpp tf2 tf2_ros sensor_msgs geometry_msgs)
 ament_target_dependencies(uwb rclcpp geometry_msgs)
 ament_target_dependencies(command_wheel rclcpp std_msgs)
 ament_target_dependencies(wheel rclcpp std_msgs)
+ament_target_dependencies(slam rclcpp tf2 tf2_ros sensor_msgs geometry_msgs)
 
 # include generated headers only for your package
 foreach(target central uwb command_wheel wheel)
@@ -70,6 +72,7 @@ install(TARGETS
   uwb
   command_wheel
   wheel
+  slam
   DESTINATION lib/${PROJECT_NAME}
 )
 

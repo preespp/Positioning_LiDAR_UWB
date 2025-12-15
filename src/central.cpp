@@ -38,17 +38,17 @@ private:
   }
 
   void fuse_if_ready() {
-    if (!have_uwb || !haveslam)
+    if (!have_uwb || !have_slam)
       return;
 
-    double x_u = last_uwb_.pose.pose.position.x;
-    double y_u = last_uwb_.pose.pose.position.y;
-    double x_s = last_slam_.pose.pose.position.x;
-    double y_s = last_slam_.pose.pose.position.y;
+    double x_u = last_uwb.pose.pose.position.x;
+    double y_u = last_uwb.pose.pose.position.y;
+    double x_s = last_slam.pose.pose.position.x;
+    double y_s = last_slam.pose.pose.position.y;
 
     // Variances
-    double var_u = last_uwb_.pose.covariance[0];
-    double var_s = last_slam_.pose.covariance[0];
+    double var_u = last_uwb.pose.covariance[0];
+    double var_s = last_slam.pose.covariance[0];
 
     // Prevent division by zero
     if (var_u < 1e-6) var_u = 1e-6;
@@ -69,12 +69,12 @@ private:
     fused.pose.pose.position.y = y_f;
     fused.pose.pose.position.z = 0.0;
 
-    // Fused covariance (lower than either alone)
+    // Fused covariance
     double var_f = 1.0 / (w_u + w_s);
     fused.pose.covariance[0] = var_f;
     fused.pose.covariance[7] = var_f;
 
-    fused_pub_->publish(fused);
+    fused_pub->publish(fused);
 
     RCLCPP_INFO(this->get_logger(),
       "FUSED: x=%.2f y=%.2f | UWB(%.2f) SLAM(%.2f)",

@@ -71,6 +71,16 @@ def generate_launch_description():
             ('/tf_static', 'tf_static'),
         ],
     )
+        
+    # SLAM Pose node
+    slam_pose_node = Node(
+        package='uwb_lidar',
+        executable='slam',
+        name='slam_pose_node',
+        output='screen',
+        namespace=namespace,
+    )
+    
     # central node
     central_node = Node(
         package='uwb_lidar',
@@ -114,6 +124,7 @@ def generate_launch_description():
         tf_link_to_laser,
         rplidar_node,
         slam_node,
+        slam_pose_node,
         central_node,
         uwb_node,
         wheel_node,

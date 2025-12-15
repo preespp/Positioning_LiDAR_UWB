@@ -18,7 +18,7 @@ public:
       geometry_msgs::msg::PoseWithCovarianceStamped>(
         "/uwb/position", 10);
 
-    open_serial("/dev/ttyUSB0");  // <-- change if needed
+    open_serial("/dev/ttyUSB1");
 
     timer_ = this->create_wall_timer(
       std::chrono::milliseconds(50),
@@ -46,8 +46,8 @@ private:
     termios tty{};
     tcgetattr(fd_, &tty);
 
-    cfsetospeed(&tty, B115200);
-    cfsetispeed(&tty, B115200);
+    cfsetospeed(&tty, B38400);
+    cfsetispeed(&tty, B38400);
 
     tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;
     tty.c_cflag |= (CLOCAL | CREAD);
